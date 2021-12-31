@@ -1,0 +1,3 @@
+from discrete_agents.random_agent import RandomAgent
+from discrete_agents.mc_agent import MonteCarloAgent
+from discrete_agents.td_agent import TemporalDifferenceAgent
