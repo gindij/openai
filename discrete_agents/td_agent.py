@@ -9,9 +9,10 @@ class TemporalDifferenceAgent(DiscreteEpisodicAgent):
         state_space,
         action_space,
         env,
-        n_episodes=1000,
+        n_episodes=10000,
         ep=1e-2,
         ep_decay_factor=0.9,
+        ep_decay_freq=1000,
         gamma=1,
         step_size=0.8,
         method="sarsa",
@@ -24,12 +25,11 @@ class TemporalDifferenceAgent(DiscreteEpisodicAgent):
         self.step_size = step_size
         self.gamma = gamma
         self.method = method
-        self.ep_orig = ep
         self.ep = ep
         self.ep_decay_factor = ep_decay_factor
+        self.ep_decay_freq = ep_decay_freq
 
     def reset(self):
-        self.ep = self.ep_orig
         self.policy = np.ones((self.n_states, self.n_actions)) / self.n_actions
         self.Q = np.zeros((self.n_states, self.n_actions))
 
@@ -72,7 +72,7 @@ class TemporalDifferenceAgent(DiscreteEpisodicAgent):
         return np.random.choice(self.action_space, p=self.policy[s, :])
 
     def learn(self):
-        self.ep = self.ep_orig
+        ep = self.ep
         for k in tqdm.tqdm(range(self.n_episodes)):
             s = self.env.reset()
             done = False
@@ -87,5 +87,5 @@ class TemporalDifferenceAgent(DiscreteEpisodicAgent):
                     self.update_policy(s)
                 s = sn
             # decrease epsilon
-            if k % 1000 == 0:
-                self.ep *= self.ep_decay_factor
+            if k % self.ep_decay_freq == 0:
+                ep *= self.ep_decay_factor

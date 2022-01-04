@@ -21,6 +21,7 @@ def average_reward_by_number_of_episodes(agent, n_measure, n_episodes_list):
     return n_episodes_list, average_rewards
 
 def average_reward_by_step_size(agent, n_episodes, step_sizes):
+    # only use for TD agents
     average_rewards = []
     ss = agent.step_size
     for step_size in step_sizes:
@@ -33,13 +34,13 @@ def average_reward_by_step_size(agent, n_episodes, step_sizes):
 
 def average_reward_by_epsilon(agent, n_episodes, epsilons):
     average_rewards = []
-    ep = agent.ep_orig
+    ep = agent.ep
     for epsilon in epsilons:
-        agent.ep_orig = epsilon
+        agent.ep = epsilon
         agent.reset()
         agent.learn()
         average_rewards.append(average_reward(agent, n_episodes))
-    agent.ep_orig = ep
+    agent.ep = ep
     return epsilons, average_rewards
 
 def average_reward_by_discount_factor(agent, n_episodes, discount_factors):

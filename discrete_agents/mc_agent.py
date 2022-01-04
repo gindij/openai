@@ -8,19 +8,22 @@ class MonteCarloAgent(DiscreteEpisodicAgent):
         self,
         state_space,
         action_space,
-        next_state_fn,
         env,
         n_episodes=1000,
         n_updates=15,
         ep=1e-1,
+        ep_decay_factor=0.9,
         gamma=1,
     ):
-        super(MonteCarloAgent, self).__init__(state_space, action_space, env, ep=ep)
+        super(MonteCarloAgent, self).__init__(state_space, action_space, env)
         self.gamma = gamma
         self.n_updates = n_updates
         self.n_episodes = n_episodes
+        self.policy = np.ones((self.n_states, self.n_actions)) / self.n_actions
         self.N = np.zeros((self.n_states, self.n_actions))
         self.Q = np.zeros((self.n_states, self.n_actions))
+        self.ep = ep
+        self.ep_decay_factor = ep_decay_factor
 
     def reset(self):
         self.N = np.zeros((len(state_space), len(action_space)))
@@ -61,9 +64,10 @@ class MonteCarloAgent(DiscreteEpisodicAgent):
         return "monte_carlo"
 
     def learn(self):
-        for _ in range(self.n_updates):
+        for _ in tqdm.tqdm(range(self.n_updates)):
             self.update_action_value_function()
             self.greedify()
+            self.ep *= self.ep_decay_factor
 
     def act(self, state):
         return np.random.choice(self.action_space, p=self.policy[state, :])
