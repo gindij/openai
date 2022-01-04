@@ -1,8 +1,8 @@
-from discrete_agents.agent import EpsilonGreedyAgent
+from discrete_agents.agent import DiscreteEpisodicAgent
 import numpy as np
 import tqdm
 
-class MonteCarloAgent(EpsilonGreedyAgent):
+class MonteCarloAgent(DiscreteEpisodicAgent):
 
     def __init__(
         self,
@@ -15,12 +15,16 @@ class MonteCarloAgent(EpsilonGreedyAgent):
         ep=1e-1,
         gamma=1,
     ):
-        super(MonteCarloAgent, self).__init__(state_space, action_space, env, next_state_fn, ep=ep)
-        self._gamma = gamma
-        self._n_updates = n_updates
-        self._n_episodes = n_episodes
-        self._N = np.zeros((len(state_space), len(action_space)))
-        self.iterate_policy()
+        super(MonteCarloAgent, self).__init__(state_space, action_space, env, ep=ep)
+        self.gamma = gamma
+        self.n_updates = n_updates
+        self.n_episodes = n_episodes
+        self.N = np.zeros((self.n_states, self.n_actions))
+        self.Q = np.zeros((self.n_states, self.n_actions))
+
+    def reset(self):
+        self.N = np.zeros((len(state_space), len(action_space)))
+        self.Q = np.zeros((self.n_states, self.n_actions))
 
     def episode(self):
         trajectory = []
@@ -34,19 +38,32 @@ class MonteCarloAgent(EpsilonGreedyAgent):
         return trajectory
 
     def update_action_value_function(self):
-        episodes = [self.episode() for _ in range(self._n_episodes)]
+        episodes = [self.episode() for _ in range(self.n_episodes)]
         for episode in episodes:
             cum_reward = 0
             reversed_episode = episode[::-1]
             for i, (s, a, r) in enumerate(reversed_episode):
-                cum_reward = self._gamma * cum_reward + r
+                cum_reward = self.gamma * cum_reward + r
                 # first visit MC
                 earlier_states = set((ss, aa) for ss, aa, _ in reversed_episode[i+1:])
                 if (s, a) not in earlier_states:
-                    self._N[s, a] += 1
-                    self._Q[s, a] += (cum_reward - self._Q[s, a]) / self._N[s, a]
+                    self.N[s, a] += 1
+                    self.Q[s, a] += (cum_reward - self.Q[s, a]) / self.N[s, a]
 
-    def iterate_policy(self):
-        for _ in tqdm.tqdm(range(self._n_updates)):
+    def greedify(self):
+        best_actions = np.argmax(self.Q, axis=1)
+        n_states = len(self.state_space)
+        n_actions = len(self.action_space)
+        self.policy = self.ep * np.ones((n_states, n_actions)) / n_actions
+        self.policy[self.state_space, best_actions] = 1 - self.ep + self.ep / n_actions
+
+    def name(self):
+        return "monte_carlo"
+
+    def learn(self):
+        for _ in range(self.n_updates):
             self.update_action_value_function()
             self.greedify()
+
+    def act(self, state):
+        return np.random.choice(self.action_space, p=self.policy[state, :])

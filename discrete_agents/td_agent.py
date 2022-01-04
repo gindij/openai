@@ -1,47 +1,91 @@
-from discrete_agents.agent import EpsilonGreedyAgent
+from discrete_agents.agent import DiscreteEpisodicAgent
 import numpy as np
 import tqdm
 
-class TemporalDifferenceAgent(EpsilonGreedyAgent):
+class TemporalDifferenceAgent(DiscreteEpisodicAgent):
 
     def __init__(
         self,
         state_space,
         action_space,
         env,
-        next_state_fn,
         n_episodes=1000,
-        ep=1e-1,
+        ep=1e-2,
+        ep_decay_factor=0.9,
         gamma=1,
-        step_size=lambda k: 0.5,
+        step_size=0.8,
         method="sarsa",
     ):
-        super(TemporalDifferenceAgent, self).__init__(state_space, action_space, env, next_state_fn, ep=ep)
-        n_states = len(state_space)
-        n_actions = len(action_space)
-        self._policy = np.ones((n_states, n_actions)) / n_actions
-        self._step_size = step_size
-        self._n_episodes = n_episodes
-        self._step_size = step_size
-        self._gamma = gamma
-        self._method = method
-        self.update_action_value_function()
-        self.greedify()
+        super(TemporalDifferenceAgent, self).__init__(state_space, action_space, env)
+        self.policy = np.ones((self.n_states, self.n_actions)) / self.n_actions
+        self.Q = np.zeros((self.n_states, self.n_actions))
+        self.step_size = step_size
+        self.n_episodes = n_episodes
+        self.step_size = step_size
+        self.gamma = gamma
+        self.method = method
+        self.ep_orig = ep
+        self.ep = ep
+        self.ep_decay_factor = ep_decay_factor
 
-    def update_action_value_function(self):
-        for k in tqdm.tqdm(range(self._n_episodes)):
-            s = self._env.reset()
-            a = self.act(s)
+    def reset(self):
+        self.ep = self.ep_orig
+        self.policy = np.ones((self.n_states, self.n_actions)) / self.n_actions
+        self.Q = np.zeros((self.n_states, self.n_actions))
+
+    def update_policy(self, s):
+        best_actions = np.flatnonzero(self.Q[s, :] == np.max(self.Q[s, :]))
+        if len(best_actions) == 1:
+            a = best_actions[0]
+        else:
+            # if multiple best actions, choose one at random
+            a = np.random.choice(best_actions)
+        # update the policy for this state to be epsilon greedy
+        self.policy[s, :] = self.ep * np.ones(self.n_actions) / self.n_actions
+        self.policy[s, a] = 1 - self.ep + self.ep / self.n_actions
+
+    def sarsa_estimate(self, s2):
+        # estimate is the action-value of the state and the next action
+        a2 = self.act(s2)
+        return self.Q[s2, a2]
+
+    def expected_sarsa_estimate(self, s2):
+        # estimate is the expectation over possible actions
+        return np.dot(self.Q[s2, :], self.policy[s2, :])
+
+    def q_learning_estimate(self, s2):
+        # estimate is the maximum over possible actions
+        return np.max(self.Q[s2, :])
+
+    def action_value_estimate(self, s2):
+        if self.method == "sarsa":
+            return self.sarsa_estimate(s2)
+        if self.method == "esarsa":
+            return self.expected_sarsa_estimate(s2)
+        if self.method == "qlearn":
+            return self.q_learning_estimate(s2)
+
+    def name(self):
+        return f"temp_diff_{self.method}"
+
+    def act(self, s):
+        return np.random.choice(self.action_space, p=self.policy[s, :])
+
+    def learn(self):
+        self.ep = self.ep_orig
+        for k in tqdm.tqdm(range(self.n_episodes)):
+            s = self.env.reset()
             done = False
             while not done:
-                sn, r, done, _ = self._env.step(a)
-                if self._method == "sarsa":
-                    an = self.act(sn)
-                    target = r + self._gamma * self._Q[sn, an]
-                elif self._method == "qlearn":
-                    target = r + self._gamma * max([self._Q[sn, aa] for aa in self.action_space])
-                self._Q[s, a] += self._step_size(k) * (target - self._Q[s, a])
-                if self._method == "sarsa":
-                    s, a = sn, an
-                elif self._method == "qlearn":
-                    s = sn
+                a = self.act(s)
+                sn, r, done, _ = self.env.step(a)
+                target = r + self.gamma * self.action_value_estimate(sn)
+                # move in the direction of the action value residual
+                self.Q[s, a] += self.step_size * (target - self.Q[s, a])
+                # if there is a change to the value function, update the policy
+                if abs(target - self.Q[s, a]) > 0:
+                    self.update_policy(s)
+                s = sn
+            # decrease epsilon
+            if k % 1000 == 0:
+                self.ep *= self.ep_decay_factor
