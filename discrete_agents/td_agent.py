@@ -1,8 +1,8 @@
-from discrete_agents.agent import DiscreteEpisodicAgent
+from discrete_agents.agent import EpsilonGreedyAgent
 import numpy as np
 import tqdm
 
-class TemporalDifferenceAgent(DiscreteEpisodicAgent):
+class TemporalDifferenceAgent(EpsilonGreedyAgent):
 
     def __init__(
         self,
@@ -10,15 +10,14 @@ class TemporalDifferenceAgent(DiscreteEpisodicAgent):
         action_space,
         env,
         n_episodes=10000,
-        ep=1e-2,
-        ep_decay_factor=0.9,
-        ep_decay_freq=1000,
-        gamma=1,
+        gamma=0.9,
         step_size=0.8,
+        ep=1e-1,
+        ep_decay_factor=0.8,
+        ep_decays=5,
         method="sarsa",
     ):
         super(TemporalDifferenceAgent, self).__init__(state_space, action_space, env)
-        self.policy = np.ones((self.n_states, self.n_actions)) / self.n_actions
         self.Q = np.zeros((self.n_states, self.n_actions))
         self.step_size = step_size
         self.n_episodes = n_episodes
@@ -27,65 +26,107 @@ class TemporalDifferenceAgent(DiscreteEpisodicAgent):
         self.method = method
         self.ep = ep
         self.ep_decay_factor = ep_decay_factor
-        self.ep_decay_freq = ep_decay_freq
+        self.ep_decay_freq = n_episodes // ep_decays
 
     def reset(self):
-        self.policy = np.ones((self.n_states, self.n_actions)) / self.n_actions
         self.Q = np.zeros((self.n_states, self.n_actions))
 
-    def update_policy(self, s):
-        best_actions = np.flatnonzero(self.Q[s, :] == np.max(self.Q[s, :]))
-        if len(best_actions) == 1:
-            a = best_actions[0]
-        else:
-            # if multiple best actions, choose one at random
-            a = np.random.choice(best_actions)
-        # update the policy for this state to be epsilon greedy
-        self.policy[s, :] = self.ep * np.ones(self.n_actions) / self.n_actions
-        self.policy[s, a] = 1 - self.ep + self.ep / self.n_actions
-
-    def sarsa_estimate(self, s2):
+    def sarsa_estimate(self, s2, ep):
         # estimate is the action-value of the state and the next action
-        a2 = self.act(s2)
-        return self.Q[s2, a2]
+        a2 = self.act_ep(s2, ep)
+        return a2, self.Q[s2, a2]
 
-    def expected_sarsa_estimate(self, s2):
+    def expected_sarsa_estimate(self, s2, ep):
         # estimate is the expectation over possible actions
-        return np.dot(self.Q[s2, :], self.policy[s2, :])
+        probs = np.ones(self.n_actions) * ep / self.n_actions
+        probs[np.argmax(self.Q[s2, :])] += 1 - ep
+        return None, np.dot(self.Q[s2, :], probs)
 
     def q_learning_estimate(self, s2):
         # estimate is the maximum over possible actions
-        return np.max(self.Q[s2, :])
+        return None, np.max(self.Q[s2, :])
 
-    def action_value_estimate(self, s2):
+    def action_value_estimate(self, s2, ep):
         if self.method == "sarsa":
-            return self.sarsa_estimate(s2)
+            return self.sarsa_estimate(s2, ep)
         if self.method == "esarsa":
-            return self.expected_sarsa_estimate(s2)
+            return self.expected_sarsa_estimate(s2, ep)
         if self.method == "qlearn":
             return self.q_learning_estimate(s2)
 
     def name(self):
-        return f"temp_diff_{self.method}"
-
-    def act(self, s):
-        return np.random.choice(self.action_space, p=self.policy[s, :])
+        return f"td(0)_{self.method}"
 
     def learn(self):
         ep = self.ep
         for k in tqdm.tqdm(range(self.n_episodes)):
             s = self.env.reset()
+            a = self.act_ep(s, ep)
             done = False
             while not done:
-                a = self.act(s)
                 sn, r, done, _ = self.env.step(a)
-                target = r + self.gamma * self.action_value_estimate(sn)
+                an, est = self.action_value_estimate(sn, ep)
+                target = r + self.gamma * est
                 # move in the direction of the action value residual
                 self.Q[s, a] += self.step_size * (target - self.Q[s, a])
-                # if there is a change to the value function, update the policy
-                if abs(target - self.Q[s, a]) > 0:
-                    self.update_policy(s)
                 s = sn
-            # decrease epsilon
-            if k % self.ep_decay_freq == 0:
+                a = an if an else self.act_ep(sn, ep)
+            if k > 0 and k % self.ep_decay_freq == 0:
+                ep *= self.ep_decay_factor
+
+
+class TemporalDifferenceMultiStepAgent(TemporalDifferenceAgent):
+
+    def __init__(
+        self,
+        state_space,
+        action_space,
+        env,
+        lambd=0.6,
+        n_episodes=50000,
+        ep=1,
+        ep_decay_factor=0.5,
+        ep_decays=10,
+        gamma=0.99,
+        step_size=0.85,
+        method="esarsa",
+    ):
+        super(TemporalDifferenceMultiStepAgent, self).__init__(state_space, action_space, env)
+        self.Q = np.zeros((self.n_states, self.n_actions))
+        self.step_size = step_size
+        self.lambd = lambd
+        self.n_episodes = n_episodes
+        self.step_size = step_size
+        self.gamma = gamma
+        assert method in ("sarsa", "esarsa")
+        self.method = method
+        self.ep = ep
+        self.ep_decay_factor = ep_decay_factor
+        self.ep_decay_freq = n_episodes // ep_decays
+
+    def reset(self):
+        self.Q = np.zeros((self.n_states, self.n_actions))
+
+    def name(self):
+        return f"td({self.lambd})_{self.method}"
+
+    def learn(self):
+        ep = self.ep
+        E = np.zeros((self.n_states, self.n_actions))
+        for k in tqdm.tqdm(range(self.n_episodes)):
+            # reset eligibility traces to 0 at the beginning of each episode
+            E *= 0
+            s = self.env.reset()
+            a = self.act_ep(s, ep)
+            done = False
+            while not done:
+                sn, r, done, _ = self.env.step(a)
+                an, est = self.action_value_estimate(sn, ep)
+                update = r + self.gamma * est - self.Q[s, a]
+                E[s, a] = 1
+                self.Q += self.step_size * update * E
+                E *= self.gamma * self.lambd
+                s = sn
+                a = an if an else self.act_ep(sn, ep)
+            if k > 0 and k % self.ep_decay_freq == 0:
                 ep *= self.ep_decay_factor

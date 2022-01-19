@@ -9,7 +9,6 @@ class DiscreteEpisodicAgent(ABC):
         self.action_space = action_space
         self.n_states = len(state_space)
         self.n_actions = len(action_space)
-        self.policy = None
         self.env = env
 
     @abstractmethod
@@ -27,3 +26,15 @@ class DiscreteEpisodicAgent(ABC):
     @abstractmethod
     def reset(self):
         raise ValueError("Unimplemented")
+
+
+class EpsilonGreedyAgent(DiscreteEpisodicAgent):
+
+    def act(self, state):
+        return np.argmax(self.Q[state, :])
+
+    def act_ep(self, state, ep):
+        r = np.random.random()
+        if r < ep:
+            return np.random.choice(self.action_space)
+        return np.argmax(self.Q[state, :])
